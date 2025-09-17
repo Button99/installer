@@ -1,6 +1,26 @@
 # Release Notes
 
-## [Unreleased](https://github.com/laravel/installer/compare/v5.14.0...master)
+## [Unreleased](https://github.com/laravel/installer/compare/v5.17.0...master)
+
+## [v5.17.0](https://github.com/laravel/installer/compare/v5.16.0...v5.17.0) - 2025-08-07
+
+* List possible values for database driver by [@dmarcoux](https://github.com/dmarcoux) in https://github.com/laravel/installer/pull/426
+
+## [v5.16.0](https://github.com/laravel/installer/compare/v5.15.0...v5.16.0) - 2025-06-17
+
+* fix: Starter kits should not ignore the `--database` option by [@mathiasgrimm](https://github.com/mathiasgrimm) in https://github.com/laravel/installer/pull/422
+
+## [v5.15.0](https://github.com/laravel/installer/compare/v5.14.2...v5.15.0) - 2025-05-20
+
+* add missing variable name to doc tags and missing doc tags to methods by [@Muetze42](https://github.com/Muetze42) in https://github.com/laravel/installer/pull/420
+
+## [v5.14.2](https://github.com/laravel/installer/compare/v5.14.1...v5.14.2) - 2025-04-01
+
+* [5.x] Only open files in the tests directory when converting to Pest by [@tonysm](https://github.com/tonysm) in https://github.com/laravel/installer/pull/414
+
+## [v5.14.1](https://github.com/laravel/installer/compare/v5.14.0...v5.14.1) - 2025-03-18
+
+* Adding Pest option back in Laravel app and improve pest experience by [@tnylea](https://github.com/tnylea) in https://github.com/laravel/installer/pull/413
 
 ## [v5.14.0](https://github.com/laravel/installer/compare/v5.13.0...v5.14.0) - 2025-03-07
 

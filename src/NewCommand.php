@@ -6,6 +6,8 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Composer;
 use Illuminate\Support\ProcessUtils;
 use Illuminate\Support\Str;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use RuntimeException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -23,6 +25,8 @@ class NewCommand extends Command
 {
     use Concerns\ConfiguresPrompts;
     use Concerns\InteractsWithHerdOrValet;
+
+    const DATABASE_DRIVERS = ['mysql', 'mariadb', 'pgsql', 'sqlite', 'sqlsrv'];
 
     /**
      * The Composer instance.
@@ -47,7 +51,7 @@ class NewCommand extends Command
             ->addOption('branch', null, InputOption::VALUE_REQUIRED, 'The branch that should be created for a new repository', $this->defaultBranch())
             ->addOption('github', null, InputOption::VALUE_OPTIONAL, 'Create a new repository on GitHub', false)
             ->addOption('organization', null, InputOption::VALUE_REQUIRED, 'The GitHub organization to create the new repository for')
-            ->addOption('database', null, InputOption::VALUE_REQUIRED, 'The database driver your application will use')
+            ->addOption('database', null, InputOption::VALUE_REQUIRED, 'The database driver your application will use. Possible values are: '.implode(', ', self::DATABASE_DRIVERS))
             ->addOption('react', null, InputOption::VALUE_NONE, 'Install the React Starter Kit')
             ->addOption('vue', null, InputOption::VALUE_NONE, 'Install the Vue Starter Kit')
             ->addOption('livewire', null, InputOption::VALUE_NONE, 'Install the Livewire Starter Kit')
@@ -55,6 +59,7 @@ class NewCommand extends Command
             ->addOption('api', null, InputOption::VALUE_NONE, 'Install Laravel API with Sanctum')
             ->addOption('withPassport', null, InputOption::VALUE_NONE, 'Use Passport for authentication')
             ->addOption('workos', null, InputOption::VALUE_NONE, 'Use WorkOS for authentication')
+            ->addOption('no-authentication', null, InputOption::VALUE_NONE, 'Do not generate authentication scaffolding')
             ->addOption('pest', null, InputOption::VALUE_NONE, 'Install the Pest testing framework')
             ->addOption('phpunit', null, InputOption::VALUE_NONE, 'Install the PHPUnit testing framework')
             ->addOption('npm', null, InputOption::VALUE_NONE, 'Install and build NPM dependencies')
@@ -164,16 +169,20 @@ class NewCommand extends Command
                     options: [
                         'laravel' => "Laravel's built-in authentication",
                         'workos' => 'WorkOS (Requires WorkOS account)',
+                        'none' => 'No authentication scaffolding',
                     ],
                     default: 'laravel',
                 )) {
                     'laravel' => $input->setOption('workos', false),
                     'workos' => $input->setOption('workos', true),
+                    'none' => $input->setOption('no-authentication', true),
                     default => null,
                 };
             }
 
-            if ($input->getOption('livewire') && ! $input->getOption('workos')) {
+            if ($input->getOption('livewire') &&
+                ! $input->getOption('workos') &&
+                ! $input->getOption('no-authentication')) {
                 $input->setOption('livewire-class-components', ! confirm(
                     label: 'Would you like to use Laravel Volt?',
                     default: true,
@@ -181,17 +190,12 @@ class NewCommand extends Command
             }
         }
 
-        if ($this->usingLaravelStarterKit($input)) {
-            if (! $input->getOption('phpunit') &&
-                ! $input->getOption('pest')) {
-                $input->setOption('pest', select(
-                    label: 'Which testing framework do you prefer?',
-                    options: ['Pest', 'PHPUnit'],
-                    default: 'Pest',
-                ) === 'Pest');
-            }
-        } else {
-            $input->setOption('phpunit', true);
+        if (! $input->getOption('phpunit') && ! $input->getOption('pest')) {
+            $input->setOption('pest', select(
+                label: 'Which testing framework do you prefer?',
+                options: ['Pest', 'PHPUnit'],
+                default: 'Pest',
+            ) === 'Pest');
         }
     }
 
@@ -271,6 +275,10 @@ class NewCommand extends Command
             if ($this->usingLaravelStarterKit($input) && $input->getOption('workos')) {
                 $createProjectCommand = str_replace(" {$starterKit} ", " {$starterKit}:dev-workos ", $createProjectCommand);
             }
+
+            if (! $this->usingLaravelStarterKit($input) && str_contains($starterKit, '://')) {
+                $createProjectCommand = 'npx tiged@latest '.$starterKit.' "'.$directory.'" && cd "'.$directory.'" && composer install';
+            }
         }
 
         $commands = [
@@ -295,7 +303,7 @@ class NewCommand extends Command
             if ($name !== '.') {
                 $this->replaceInFile(
                     'APP_URL=http://localhost',
-                    'APP_URL='.$this->generateAppUrl($name),
+                    'APP_URL='.$this->generateAppUrl($name, $directory),
                     $directory.'/.env'
                 );
 
@@ -342,27 +350,35 @@ class NewCommand extends Command
                 $output->writeln('');
             }
 
+            $packageInstall = 'npm install';
+
+            if (file_exists($directory.'/pnpm-lock.yaml')) {
+                $packageInstall = 'pnpm install';
+            } elseif (file_exists($directory.'/yarn.lock')) {
+                $packageInstall = 'yarn install';
+            }
+
             $runNpm = $input->getOption('npm');
 
             if (! $input->getOption('npm') && $input->isInteractive()) {
                 $runNpm = confirm(
-                    label: 'Would you like to run <options=bold>npm install</> and <options=bold>npm run build</>?'
+                    label: 'Would you like to run <options=bold>'.$packageInstall.'</> and <options=bold>npm run build</>?'
                 );
             }
 
             if ($runNpm) {
-                $this->runCommands(['npm install', 'npm run build'], $input, $output, workingPath: $directory);
+                $this->runCommands([$packageInstall, 'npm run build'], $input, $output, workingPath: $directory);
             }
 
             $output->writeln("  <bg=blue;fg=white> INFO </> Application ready in <options=bold>[{$name}]</>. You can start your local development using:".PHP_EOL);
             $output->writeln('<fg=gray>➜</> <options=bold>cd '.$name.'</>');
 
             if (! $runNpm) {
-                $output->writeln('<fg=gray>➜</> <options=bold>npm install && npm run build</>');
+                $output->writeln('<fg=gray>➜</> <options=bold>'.$packageInstall.' && npm run build</>');
             }
 
             if ($this->isParkedOnHerdOrValet($directory)) {
-                $url = $this->generateAppUrl($name);
+                $url = $this->generateAppUrl($name, $directory);
                 $output->writeln('<fg=gray>➜</> Open: <options=bold;href='.$url.'>'.$url.'</>');
             } else {
                 $output->writeln('<fg=gray>➜</> <options=bold>composer run dev</>');
@@ -548,7 +564,7 @@ class NewCommand extends Command
             $databaseOptions = $this->databaseOptions()
         )->keys()->first();
 
-        if ($this->usingStarterKit($input)) {
+        if (! $input->getOption('database') && $this->usingStarterKit($input)) {
             // Starter kits will already be migrated in post composer create-project command...
             $migrate = false;
 
@@ -596,12 +612,12 @@ class NewCommand extends Command
     /**
      * Validate the database driver input.
      *
-     * @param  \Symfony\Components\Console\Input\InputInterface
+     * @param  \Symfony\Components\Console\Input\InputInterface  $input
      */
     protected function validateDatabaseOption(InputInterface $input)
     {
-        if ($input->getOption('database') && ! in_array($input->getOption('database'), $drivers = ['mysql', 'mariadb', 'pgsql', 'sqlite', 'sqlsrv'])) {
-            throw new \InvalidArgumentException("Invalid database driver [{$input->getOption('database')}]. Valid options are: ".implode(', ', $drivers).'.');
+        if ($input->getOption('database') && ! in_array($input->getOption('database'), self::DATABASE_DRIVERS)) {
+            throw new \InvalidArgumentException("Invalid database driver [{$input->getOption('database')}]. Possible values are: ".implode(', ', self::DATABASE_DRIVERS).'.');
         }
     }
 
@@ -644,25 +660,13 @@ class NewCommand extends Command
             $this->phpBinary().' ./vendor/bin/pest --init',
         ];
 
-        if ($this->usingStarterKit($input)) {
-            $commands[] = $composerBinary.' require pestphp/pest-plugin-drift --dev';
-            $commands[] = $this->phpBinary().' ./vendor/bin/pest --drift';
-            $commands[] = $composerBinary.' remove pestphp/pest-plugin-drift --dev';
-        }
+        $commands[] = $composerBinary.' require pestphp/pest-plugin-drift --dev';
+        $commands[] = $this->phpBinary().' ./vendor/bin/pest --drift';
+        $commands[] = $composerBinary.' remove pestphp/pest-plugin-drift --dev';
 
         $this->runCommands($commands, $input, $output, workingPath: $directory, env: [
             'PEST_NO_SUPPORT' => 'true',
         ]);
-
-        $this->replaceFile(
-            'pest/Feature.php',
-            $directory.'/tests/Feature/ExampleTest.php',
-        );
-
-        $this->replaceFile(
-            'pest/Unit.php',
-            $directory.'/tests/Unit/ExampleTest.php',
-        );
 
         if ($this->usingStarterKit($input)) {
             $this->replaceInFile(
@@ -670,10 +674,31 @@ class NewCommand extends Command
                 './vendor/bin/pest',
                 $directory.'/.github/workflows/tests.yml',
             );
-        }
 
-        if ($this->usingStarterKit($input) && $input->getOption('phpunit')) {
-            $this->deleteFile($directory.'/tests/Pest.php');
+            $contents = file_get_contents("$directory/tests/Pest.php");
+
+            $contents = str_replace(
+                " // ->use(Illuminate\Foundation\Testing\RefreshDatabase::class)",
+                "    ->use(Illuminate\Foundation\Testing\RefreshDatabase::class)",
+                $contents,
+            );
+
+            file_put_contents("$directory/tests/Pest.php", $contents);
+
+            $directoryIterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator("$directory/tests"));
+
+            foreach ($directoryIterator as $testFile) {
+                if ($testFile->isDir()) {
+                    continue;
+                }
+
+                $contents = file_get_contents($testFile);
+
+                file_put_contents(
+                    $testFile,
+                    str_replace("\n\nuses(\Illuminate\Foundation\Testing\RefreshDatabase::class);", '', $contents),
+                );
+            }
         }
 
         $this->commitChanges('Install Pest', $directory, $input, $output);
@@ -791,10 +816,15 @@ class NewCommand extends Command
      * Generate a valid APP_URL for the given application name.
      *
      * @param  string  $name
+     * @param  string  $directory
      * @return string
      */
-    protected function generateAppUrl($name)
+    protected function generateAppUrl($name, $directory)
     {
+        if (! $this->isParkedOnHerdOrValet($directory)) {
+            return 'http://localhost:8000';
+        }
+
         $hostname = mb_strtolower($name).'.'.$this->getTld();
 
         return $this->canResolveHostname($hostname) ? 'http://'.$hostname : 'http://localhost';
@@ -802,9 +832,21 @@ class NewCommand extends Command
 
     /**
      * Get the starter kit repository, if any.
+     *
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @return string|null
      */
     protected function getStarterKit(InputInterface $input): ?string
     {
+        if ($input->getOption('no-authentication')) {
+            return match (true) {
+                $input->getOption('react') => 'laravel/blank-react-starter-kit',
+                $input->getOption('vue') => 'laravel/blank-vue-starter-kit',
+                $input->getOption('livewire') => 'laravel/blank-livewire-starter-kit',
+                default => $input->getOption('using'),
+            };
+        }
+
         return match (true) {
             $input->getOption('react') => 'laravel/react-starter-kit',
             $input->getOption('vue') => 'laravel/vue-starter-kit',
@@ -815,6 +857,9 @@ class NewCommand extends Command
 
     /**
      * Determine if a Laravel first-party starter kit has been chosen.
+     *
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @return bool
      */
     protected function usingLaravelStarterKit(InputInterface $input): bool
     {
@@ -825,7 +870,7 @@ class NewCommand extends Command
     /**
      * Determine if a starter kit is being used.
      *
-     * @param  \Symfony\Component\Console\Input\InputInterface
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
      * @return bool
      */
     protected function usingStarterKit(InputInterface $input)
@@ -920,7 +965,7 @@ class NewCommand extends Command
     {
         if (! $output->isDecorated()) {
             $commands = array_map(function ($value) {
-                if (Str::startsWith($value, ['chmod', 'git', $this->phpBinary().' ./vendor/bin/pest'])) {
+                if (Str::startsWith($value, ['chmod', 'rm', 'git', $this->phpBinary().' ./vendor/bin/pest'])) {
                     return $value;
                 }
 
@@ -930,7 +975,7 @@ class NewCommand extends Command
 
         if ($input->getOption('quiet')) {
             $commands = array_map(function ($value) {
-                if (Str::startsWith($value, ['chmod', 'git', $this->phpBinary().' ./vendor/bin/pest'])) {
+                if (Str::startsWith($value, ['chmod', 'rm', 'git', $this->phpBinary().' ./vendor/bin/pest'])) {
                     return $value;
                 }
 
@@ -940,7 +985,7 @@ class NewCommand extends Command
 
         $process = Process::fromShellCommandline(implode(' && ', $commands), $workingPath, $env, null, null);
 
-        if ('\\' !== DIRECTORY_SEPARATOR && file_exists('/dev/tty') && is_readable('/dev/tty')) {
+        if (Process::isTtySupported()) {
             try {
                 $process->setTty(true);
             } catch (RuntimeException $e) {
